@@ -2457,6 +2457,21 @@ static const bfd_vma elf32_thumb2_plt_entry [] =
 			/* b      .-4		  */
 };
 
+/* The format of entries in FP/M binary.  */
+static const bfd_vma elf32_thumb1_plt_entry [] =
+{
+  0x4803b407,		/* push  {r0, r1, r2}              */
+			/* ldr   r0, [pc, #12] =0x20000010 */
+  0x49036800,		/* ldr   r0, [r0, #0]              */
+			/* ldr   r1, [pc, #12] =offset     */
+  0x90025840,		/* ldr   r0, [r0, r1]              */
+			/* str   r0, [sp, #8]              */
+  0x46c0bd03,		/* pop   {r0, r1, pc}              */
+			/* nop                             */
+  0x20000010,		/* .long got_pointer               */
+  0x00000000,		/* .long offset                    */
+};
+
 /* The format of the first entry in the procedure linkage table
    for a VxWorks executable.  */
 static const bfd_vma elf32_arm_vxworks_exec_plt0_entry[] =
@@ -4012,8 +4027,16 @@ elf32_arm_create_dynamic_sections (bfd *dynobj, struct bfd_link_info *info)
       htab->obfd = dynobj;
       if (using_thumb_only (htab))
 	{
-	  htab->plt_header_size = 4 * ARRAY_SIZE (elf32_thumb2_plt0_entry);
-	  htab->plt_entry_size  = 4 * ARRAY_SIZE (elf32_thumb2_plt_entry);
+	  if (using_thumb2 (htab))
+	    {
+	      htab->plt_header_size = 4 * ARRAY_SIZE (elf32_thumb2_plt0_entry);
+	      htab->plt_entry_size  = 4 * ARRAY_SIZE (elf32_thumb2_plt_entry);
+	    }
+	  else
+	    {
+	      htab->plt_header_size = 0;
+	      htab->plt_entry_size  = 4 * ARRAY_SIZE (elf32_thumb1_plt_entry);
+	    }
 	}
       htab->obfd = saved_obfd;
     }
@@ -9830,43 +9853,46 @@ elf32_arm_populate_plt_entry (bfd *output_bfd, struct bfd_link_info *info,
     }
   else if (using_thumb_only (htab))
     {
-      /* PR ld/16017: Generate thumb only PLT entries.  */
-      if (!using_thumb2 (htab))
+      if (using_thumb2 (htab))
 	{
-	  /* FIXME: We ought to be able to generate thumb-1 PLT
-	     instructions...  */
-	  _bfd_error_handler (_("%pB: warning: thumb-1 mode PLT generation not currently supported"),
-			      output_bfd);
-	  return false;
+	  /* Calculate the displacement between the PLT slot and the entry in
+	     the GOT.  The 12-byte offset accounts for the value produced by
+	     adding to pc in the 3rd instruction of the PLT stub.  */
+	  got_displacement = got_address - (plt_address + 12);
+
+	  /* As we are using 32 bit instructions we have to use 'put_arm_insn'
+	     instead of 'put_thumb_insn'.  */
+	  put_arm_insn (htab, output_bfd,
+			elf32_thumb2_plt_entry[0]
+			| ((got_displacement & 0x000000ff) << 16)
+			| ((got_displacement & 0x00000700) << 20)
+			| ((got_displacement & 0x00000800) >>  1)
+			| ((got_displacement & 0x0000f000) >> 12),
+			ptr + 0);
+	  put_arm_insn (htab, output_bfd,
+			elf32_thumb2_plt_entry[1]
+			| ((got_displacement & 0x00ff0000)      )
+			| ((got_displacement & 0x07000000) <<  4)
+			| ((got_displacement & 0x08000000) >> 17)
+			| ((got_displacement & 0xf0000000) >> 28),
+			ptr + 4);
+	  put_arm_insn (htab, output_bfd,
+			elf32_thumb2_plt_entry[2],
+			ptr + 8);
+	  put_arm_insn (htab, output_bfd,
+			elf32_thumb2_plt_entry[3],
+			ptr + 12);
 	}
-
-      /* Calculate the displacement between the PLT slot and the entry in
-	 the GOT.  The 12-byte offset accounts for the value produced by
-	 adding to pc in the 3rd instruction of the PLT stub.  */
-      got_displacement = got_address - (plt_address + 12);
-
-      /* As we are using 32 bit instructions we have to use 'put_arm_insn'
-	 instead of 'put_thumb_insn'.  */
-      put_arm_insn (htab, output_bfd,
-		    elf32_thumb2_plt_entry[0]
-		    | ((got_displacement & 0x000000ff) << 16)
-		    | ((got_displacement & 0x00000700) << 20)
-		    | ((got_displacement & 0x00000800) >>  1)
-		    | ((got_displacement & 0x0000f000) >> 12),
-		    ptr + 0);
-      put_arm_insn (htab, output_bfd,
-		    elf32_thumb2_plt_entry[1]
-		    | ((got_displacement & 0x00ff0000)      )
-		    | ((got_displacement & 0x07000000) <<  4)
-		    | ((got_displacement & 0x08000000) >> 17)
-		    | ((got_displacement & 0xf0000000) >> 28),
-		    ptr + 4);
-      put_arm_insn (htab, output_bfd,
-		    elf32_thumb2_plt_entry[2],
-		    ptr + 8);
-      put_arm_insn (htab, output_bfd,
-		    elf32_thumb2_plt_entry[3],
-		    ptr + 12);
+      else
+	{
+	  /* Generate thumb-1 only PLT entries for FP/M.  */
+	  put_arm_insn (htab, output_bfd, elf32_thumb1_plt_entry[0], ptr + 0);
+	  put_arm_insn (htab, output_bfd, elf32_thumb1_plt_entry[1], ptr + 4);
+	  put_arm_insn (htab, output_bfd, elf32_thumb1_plt_entry[2], ptr + 8);
+	  put_arm_insn (htab, output_bfd, elf32_thumb1_plt_entry[3], ptr + 12);
+	  bfd_put_32 (output_bfd, elf32_thumb1_plt_entry[4], ptr + 16);
+	  bfd_put_32 (output_bfd, plt_index * 4, ptr + 20);
+	}
     }
   else
     {
@@ -12681,7 +12707,7 @@ elf32_arm_final_link_relocate (reloc_howto_type *	    howto,
 
 	    /* Resolve relocation.  */
 	    bfd_put_32 (output_bfd, (offset + sgot->output_offset),
-		        contents + rel->r_offset);
+			contents + rel->r_offset);
 	    /* Emit R_ARM_FUNCDESC_VALUE on funcdesc if not done yet.  */
 	    arm_elf_fill_funcdesc (output_bfd, info,
 				   &eh->fdpic_cnts.funcdesc_offset,
@@ -20646,7 +20672,7 @@ elf32_arm_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 	 example.  */
       if (in_flags == 0)
 	return true;
-      
+
       elf_flags_init (obfd) = true;
       elf_elfheader (obfd)->e_flags = in_flags;
 
