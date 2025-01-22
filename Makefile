@@ -11,7 +11,9 @@ all:    build
 	$(MAKE) -C build $@
 
 install: build/ld/ld-new
+	install -d $(HOME)/.local/lib/fpm/arm
 	install build/ld/ld-new $(HOME)/.local/lib/fpm/arm/ld
+	ln -s -f ld $(HOME)/.local/lib/fpm/arm/collect2
 
 clean:
 	rm -rf build
