@@ -2448,13 +2448,16 @@ static const bfd_vma elf32_thumb2_plt0_entry [] =
    look like this.  */
 static const bfd_vma elf32_thumb2_plt_entry [] =
 {
-  /* NOTE: As this is a mixture of 16-bit and 32-bit instructions,
-     an instruction maybe encoded to one or two array elements.  */
-  0x0c00f240,		/* movw	   ip, #0xNNNN	  */
-  0x0c00f2c0,		/* movt	   ip, #0xNNNN	  */
-  0xf8dc44fc,		/* add	   ip, pc	  */
-  0xe7fcf000		/* ldr.w   pc, [ip]	  */
-			/* b      .-4		  */
+  0x4803b407,		/* push  {r0, r1, r2}              */
+			/* ldr   r0, [pc, #12] =0x20000010 */
+  0x49036800,		/* ldr   r0, [r0, #0]              */
+			/* ldr   r1, [pc, #12] =offset     */
+  0x90025840,		/* ldr   r0, [r0, r1]              */
+			/* str   r0, [sp, #8]              */
+  0xbf00bd03,		/* pop   {r0, r1, pc}              */
+			/* nop                             */
+  0x20000010,		/* .long got_pointer               */
+  0x00000000,		/* .long offset                    */
 };
 
 /* The format of entries in FP/M binary.  */
@@ -4029,7 +4032,7 @@ elf32_arm_create_dynamic_sections (bfd *dynobj, struct bfd_link_info *info)
 	{
 	  if (using_thumb2 (htab))
 	    {
-	      htab->plt_header_size = 4 * ARRAY_SIZE (elf32_thumb2_plt0_entry);
+	      htab->plt_header_size = 0;
 	      htab->plt_entry_size  = 4 * ARRAY_SIZE (elf32_thumb2_plt_entry);
 	    }
 	  else
@@ -9855,33 +9858,13 @@ elf32_arm_populate_plt_entry (bfd *output_bfd, struct bfd_link_info *info,
     {
       if (using_thumb2 (htab))
 	{
-	  /* Calculate the displacement between the PLT slot and the entry in
-	     the GOT.  The 12-byte offset accounts for the value produced by
-	     adding to pc in the 3rd instruction of the PLT stub.  */
-	  got_displacement = got_address - (plt_address + 12);
-
-	  /* As we are using 32 bit instructions we have to use 'put_arm_insn'
-	     instead of 'put_thumb_insn'.  */
-	  put_arm_insn (htab, output_bfd,
-			elf32_thumb2_plt_entry[0]
-			| ((got_displacement & 0x000000ff) << 16)
-			| ((got_displacement & 0x00000700) << 20)
-			| ((got_displacement & 0x00000800) >>  1)
-			| ((got_displacement & 0x0000f000) >> 12),
-			ptr + 0);
-	  put_arm_insn (htab, output_bfd,
-			elf32_thumb2_plt_entry[1]
-			| ((got_displacement & 0x00ff0000)      )
-			| ((got_displacement & 0x07000000) <<  4)
-			| ((got_displacement & 0x08000000) >> 17)
-			| ((got_displacement & 0xf0000000) >> 28),
-			ptr + 4);
-	  put_arm_insn (htab, output_bfd,
-			elf32_thumb2_plt_entry[2],
-			ptr + 8);
-	  put_arm_insn (htab, output_bfd,
-			elf32_thumb2_plt_entry[3],
-			ptr + 12);
+	  /* Generate thumb-2 only PLT entries for FP/M.  */
+	  put_arm_insn (htab, output_bfd, elf32_thumb2_plt_entry[0], ptr + 0);
+	  put_arm_insn (htab, output_bfd, elf32_thumb2_plt_entry[1], ptr + 4);
+	  put_arm_insn (htab, output_bfd, elf32_thumb2_plt_entry[2], ptr + 8);
+	  put_arm_insn (htab, output_bfd, elf32_thumb2_plt_entry[3], ptr + 12);
+	  bfd_put_32 (output_bfd, elf32_thumb2_plt_entry[4], ptr + 16);
+	  bfd_put_32 (output_bfd, plt_index * 4, ptr + 20);
 	}
       else
 	{
